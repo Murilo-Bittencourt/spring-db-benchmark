@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spring DB Benchmark — Dashboard</title>
+<script src="./vendor/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#1a2129; --panel2:#222b35; --txt:#e6edf3; --muted:#8b98a5;
+    --grid:#2d3742; --accent:#4dabf7;
+    --s1:#ff6b6b; --s2:#ffa94d; --s3:#4dabf7; --s4:#9775fa; --s5:#51cf66;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+    font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; font-size:14px; }
+  header { padding:20px 28px; border-bottom:1px solid var(--grid); display:flex;
+    align-items:center; gap:20px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; font-weight:600; }
+  h2 { font-size:15px; margin:0 0 14px; font-weight:600; color:var(--accent); }
+  .wrap { padding:24px 28px; max-width:1280px; margin:0 auto; }
+  .meta { display:flex; gap:24px; flex-wrap:wrap; color:var(--muted); font-size:13px; }
+  .meta b { color:var(--txt); }
+  .controls { margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  select,input,button { background:var(--panel2); color:var(--txt); border:1px solid var(--grid);
+    border-radius:6px; padding:7px 10px; font-size:13px; }
+  button { cursor:pointer; background:var(--accent); color:#08121e; border:none; font-weight:600; }
+  button:disabled { opacity:.5; cursor:wait; }
+  button.toggle { background:var(--panel2); color:var(--muted); border:1px solid var(--grid); }
+  button.toggle.active { background:var(--accent); color:#08121e; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .card { background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:18px; }
+  .card.full { grid-column:1/-1; }
+  canvas { max-height:300px; }
+  .note { color:var(--muted); font-size:12px; margin-top:8px; line-height:1.5; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th,td { text-align:right; padding:7px 9px; border-bottom:1px solid var(--grid); white-space:nowrap; }
+  th:first-child,td:first-child,th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3) { text-align:left; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); cursor:pointer; }
+  tbody tr:hover { background:var(--panel2); }
+  .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .cold { background:#1c3a5e; color:#74c0fc; } .warm { background:#5e3a1c; color:#ffc078; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; font-size:12px; color:var(--muted); }
+  .legend span { display:flex; align-items:center; gap:6px; }
+  .dot { width:11px; height:11px; border-radius:3px; display:inline-block; }
+  .strat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .strat { background:var(--panel2); border-radius:8px; padding:12px 14px; border-left:3px solid; }
+  .strat h3 { margin:0 0 4px; font-size:13px; } .strat p { margin:0; color:var(--muted); font-size:12px; line-height:1.5; }
+  .caveat { background:#2a2417; border:1px solid #5c4d23; border-radius:8px; padding:14px 16px; color:#e8d9a8; font-size:12.5px; line-height:1.6; }
+  .caveat b { color:#ffd43b; }
+  .empty { text-align:center; color:var(--muted); padding:60px 20px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .rank { list-style:none; padding:0; margin:0; }
+  .rank li { padding:10px 12px; background:var(--panel2); border-radius:7px; margin-bottom:7px;
+    display:flex; align-items:center; gap:10px; border-left:3px solid transparent; }
+  .rank li .pos { font-size:18px; min-width:26px; text-align:center; }
+  .rank li b { font-size:13px; }
+  #rankPerOp td { font-size:12px; }
+  #rankPerOp td:first-child { font-weight:600; color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🗄️ Spring DB Benchmark</h1>
+  <div class="meta" id="meta"></div>
+  <div class="controls">
+    <button class="toggle active" id="tCold" onclick="setRun('COLD')">COLD</button>
+    <button class="toggle" id="tWarm" onclick="setRun('WARM')">WARM</button>
+    <select id="fileSel" onchange="loadFile(this.value)"></select>
+  </div>
+</header>
+
+<div class="wrap" id="content">
+  <div class="empty" id="empty">Carregando resultados de <code>./data/</code>…</div>
+
+  <div id="dash" style="display:none">
+    <div class="legend" id="legend"></div>
+
+    <div class="card full" id="rankCard" style="margin-bottom:18px">
+      <h2>🏆 Ranking <span class="muted" style="font-weight:400">(run atual — <span id="rankRun"></span>)</span></h2>
+      <div class="grid">
+        <div>
+          <h3 style="margin:0 0 10px; font-size:13px">Geral — menor posição média vence</h3>
+          <ol class="rank" id="rankOverall"></ol>
+          <div class="note">Posição média entre as 5 operações (1º = mais rápido naquela op). Empata vazão de operações de escalas diferentes de forma justa.</div>
+        </div>
+        <div>
+          <h3 style="margin:0 0 10px; font-size:13px">Por operação — vazão (reg/s)</h3>
+          <div style="overflow:auto"><table id="rankPerOp"></table></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><h2>Throughput (registros/segundo) — maior é melhor</h2><canvas id="cThroughput"></canvas>
+        <div class="note">Vazão por operação. SELECT materializa N linhas reais; escrita = lote completo.</div></div>
+      <div class="card"><h2>Latência (ms) — menor é melhor</h2><canvas id="cLatency"></canvas>
+        <div class="note">Tempo só da fase medida (act), sem o arrange/reset.</div></div>
+      <div class="card"><h2>WAL gerado (MB)</h2><canvas id="cWal"></canvas>
+        <div class="note">Write-Ahead Log via <code>pg_wal_lsn_diff</code>. Métrica confiável. COPY tende a gerar menos.</div></div>
+      <div class="card"><h2>Cache hit de leitura (SELECT) %</h2><canvas id="cCache"></canvas>
+        <div class="note">Exato via <code>EXPLAIN (ANALYZE, BUFFERS)</code> — sem lag do pg_stat.</div></div>
+    </div>
+
+    <div class="card full" style="margin-top:18px">
+      <h2>Estratégias</h2>
+      <div class="strat-grid" id="strats"></div>
+    </div>
+
+    <div class="card full" style="margin-top:18px">
+      <h2>Tabela completa <span class="note" style="font-weight:400">(clique no cabeçalho pra ordenar)</span></h2>
+      <div style="max-height:460px; overflow:auto">
+        <table id="tbl"><thead><tr></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div class="card full" style="margin-top:18px">
+      <h2>Como ler / ressalvas</h2>
+      <div class="caveat">
+        ✅ <b>Confiável:</b> <b>elapsedMs</b>, <b>throughput</b>, <b>WAL</b> (LSN diff), <b>tuplesAffected</b> (rowcount da operação), <b>cacheHit do SELECT</b> (EXPLAIN BUFFERS).<br>
+        ⚠️ <b>Indicativo:</b> <b>heapBlocks/cacheHit de ESCRITA</b> — <code>pg_statio</code> tem lag de flush (~1s); operação rápida (INSERT/DELETE) pode reportar 0. Confiável só em volume grande.<br>
+        ⚠️ <b>memoryDeltaKb</b> — aproximação via <code>Runtime</code>+GC, pode dar negativo. Indicativo.<br>
+        ℹ️ <b>COLD</b> = tabela resetada antes (TRUNCATE + VACUUM FULL ANALYZE + CHECKPOINT). <b>WARM</b> = continua do COLD. SELECT COLD não é cache-frio real (sem restart do PG).<br>
+        ℹ️ Execução single-thread — throughput é de uma thread, não teste de concorrência.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const STRATS = {
+  S1_JPA_SAVE_ALL:   {color:'var(--s1)', hex:'#ff6b6b', label:'S1 JPA saveAll',  desc:'saveAll() sem otimização. Baseline — INSERT/UPDATE linha a linha pelo Hibernate.'},
+  S2_JPA_BATCH:      {color:'var(--s2)', hex:'#ffa94d', label:'S2 JPA batch',    desc:'EntityManager.persist() + flush/clear a cada 500 (hibernate.jdbc.batch_size).'},
+  S3_JDBC_BATCH:     {color:'var(--s3)', hex:'#4dabf7', label:'S3 JDBC batch',   desc:'JdbcTemplate.batchUpdate() com BatchPreparedStatementSetter.'},
+  S4_NAMED_JDBC_BATCH:{color:'var(--s4)',hex:'#9775fa', label:'S4 Named JDBC',   desc:'NamedParameterJdbcTemplate.batchUpdate() com SqlParameterSource[].'},
+  S5_COPY_MANAGER:   {color:'var(--s5)', hex:'#51cf66', label:'S5 CopyManager',  desc:'COPY FROM STDIN (org.postgresql copy). Máxima ingestão. UPSERT cai pra JDBC (COPY não faz ON CONFLICT).'}
+};
+const OPS = ['INSERT','UPDATE','DELETE','UPSERT','SELECT'];
+const COLS = [
+  ['strategy','Estratégia'],['operation','Op'],['runType','Run'],
+  ['elapsedMs','ms'],['throughputPerSecond','reg/s'],['tuplesAffected','linhas'],
+  ['walGeneratedMb','WAL MB'],['heapBlocksHit','blk hit'],['heapBlocksRead','blk read'],
+  ['cacheHitPercent','cache%'],['memoryDeltaKb','mem KB'],['checkpointReq','ckpt'],['buffersWritten','buf']
+];
+
+let report = null, runType = 'COLD', charts = {}, sortKey='strategy', sortDir=1;
+
+function num(v){ return typeof v==='number' ? v.toLocaleString('pt-BR') : v; }
+
+// Site estático (GitHub Pages): sem API, lê arquivos de ./data/.
+// manifest.json lista os arquivos (Pages não permite listar diretório).
+async function init(){
+  try {
+    const files = await fetch('./data/manifest.json').then(x=>x.json());
+    const sel = document.getElementById('fileSel');
+    sel.innerHTML = '';
+    (files||[]).forEach(f=>{ const o=document.createElement('option'); o.value=f; o.textContent=f; sel.appendChild(o); });
+    if (files && files.length) {
+      await loadFile(files[0]); // sempre o último run (manifesto vem em ordem decrescente)
+    } else {
+      document.getElementById('empty').textContent = 'Nenhum resultado em ./data/. Rode o build-pages para gerar.';
+    }
+  } catch(e){
+    document.getElementById('empty').textContent = 'Erro ao carregar ./data/manifest.json: '+e.message;
+  }
+}
+
+async function loadFile(name){
+  try {
+    report = await fetch('./data/'+name).then(x=>x.json());
+    document.getElementById('fileSel').value = name;
+    render();
+  } catch(e){
+    document.getElementById('empty').textContent = 'Erro ao ler '+name+': '+e.message;
+  }
+}
+
+function setRun(rt){
+  runType = rt;
+  document.getElementById('tCold').classList.toggle('active', rt==='COLD');
+  document.getElementById('tWarm').classList.toggle('active', rt==='WARM');
+  if (report) render();
+}
+
+function render(){
+  document.getElementById('empty').style.display='none';
+  document.getElementById('dash').style.display='block';
+  const rows = report.results.filter(r=>r.runType===runType);
+
+  document.getElementById('meta').innerHTML =
+    `<div><b>${report.volume.toLocaleString('pt-BR')}</b> registros</div>`+
+    `<div>exec: <b>${report.executedAt}</b></div>`+
+    `<div>total: <b>${(report.totalBenchmarkMs/1000).toFixed(1)}s</b></div>`+
+    `<div><b>${report.totalResults}</b> medições</div>`;
+
+  // legend + strategy cards
+  const present = [...new Set(report.results.map(r=>r.strategy))];
+  document.getElementById('legend').innerHTML = present.map(s=>
+    `<span><i class="dot" style="background:${STRATS[s]?.hex||'#888'}"></i>${STRATS[s]?.label||s}</span>`).join('');
+  document.getElementById('strats').innerHTML = present.map(s=>
+    `<div class="strat" style="border-color:${STRATS[s]?.hex||'#888'}">
+       <h3>${STRATS[s]?.label||s}</h3><p>${STRATS[s]?.desc||''}</p></div>`).join('');
+
+  rankings(rows, present);
+
+  // tabela primeiro — não depende do Chart.js
+  table();
+  if (typeof Chart === 'undefined') {
+    document.querySelectorAll('canvas').forEach(c=>{
+      c.insertAdjacentHTML('afterend','<div class="note" style="color:#ff8787">Chart.js não carregou (/vendor/chart.umd.min.js). Tabela abaixo funciona.</div>');
+    });
+    return;
+  }
+  try {
+    chart('cThroughput','throughputPerSecond', rows, present);
+    chart('cLatency','elapsedMs', rows, present);
+    chart('cWal','walGeneratedMb', rows, present);
+    cacheChart(rows, present);
+  } catch(e){ console.error('chart render falhou', e); }
+}
+
+function rankings(rows, present){
+  document.getElementById('rankRun').textContent = runType;
+  const medals = ['🥇','🥈','🥉'];
+  const posSum = {};
+  const headerCells = ['Operação'].concat(present.map((_,i)=> i<3 ? medals[i] : (i+1)+'º'));
+  const bodyRows = [];
+
+  OPS.forEach(op=>{
+    const ordered = present
+      .map(s=>({ s, v: (rows.find(r=>r.strategy===s && r.operation===op)?.throughputPerSecond) || 0 }))
+      .sort((a,b)=> b.v - a.v);
+    ordered.forEach((o,i)=>{ posSum[o.s] = (posSum[o.s]||0) + (i+1); });
+    bodyRows.push('<tr><td>'+op+'</td>'+ ordered.map(o=>
+      `<td><span class="dot" style="background:${STRATS[o.s]?.hex||'#888'}"></span> ${STRATS[o.s]?.label||o.s} <span class="muted">${o.v.toLocaleString('pt-BR')}</span></td>`
+    ).join('') +'</tr>');
+  });
+
+  document.getElementById('rankPerOp').innerHTML =
+    '<thead><tr>'+headerCells.map(h=>`<th style="text-align:left">${h}</th>`).join('')+'</tr></thead>'+
+    '<tbody>'+bodyRows.join('')+'</tbody>';
+
+  const overall = present
+    .map(s=>({ s, avg: posSum[s]/OPS.length }))
+    .sort((a,b)=> a.avg - b.avg);
+  document.getElementById('rankOverall').innerHTML = overall.map((o,i)=>
+    `<li style="border-left-color:${STRATS[o.s]?.hex||'#888'}">
+       <span class="pos">${medals[i]||(i+1)+'º'}</span>
+       <b>${STRATS[o.s]?.label||o.s}</b>
+       <span class="muted" style="margin-left:auto">posição média ${o.avg.toFixed(1)}º</span>
+     </li>`).join('');
+}
+
+function dataFor(metric, rows, strat){
+  return OPS.map(op=>{ const r=rows.find(x=>x.strategy===strat&&x.operation===op); return r?r[metric]:0; });
+}
+
+function chart(canvasId, metric, rows, present){
+  if (charts[canvasId]) charts[canvasId].destroy();
+  charts[canvasId] = new Chart(document.getElementById(canvasId), {
+    type:'bar',
+    data:{ labels:OPS, datasets: present.map(s=>({
+      label:STRATS[s]?.label||s, data:dataFor(metric,rows,s),
+      backgroundColor:STRATS[s]?.hex||'#888', borderRadius:3 })) },
+    options:baseOpts()
+  });
+}
+
+function cacheChart(rows, present){
+  // only SELECT cache hit is reliable; parse "100,00%" -> 100
+  const id='cCache';
+  if (charts[id]) charts[id].destroy();
+  const parse = s => { if(!s||s==='N/A') return 0; return parseFloat(String(s).replace('%','').replace(',','.'))||0; };
+  charts[id] = new Chart(document.getElementById(id), {
+    type:'bar',
+    data:{ labels:present.map(s=>STRATS[s]?.label||s),
+      datasets:[{ label:'SELECT cache hit %',
+        data:present.map(s=>{ const r=rows.find(x=>x.strategy===s&&x.operation==='SELECT'); return r?parse(r.cacheHitPercent):0; }),
+        backgroundColor:present.map(s=>STRATS[s]?.hex||'#888'), borderRadius:3 }] },
+    options:{...baseOpts(), scales:{...baseOpts().scales, y:{...baseOpts().scales.y, max:100}}, plugins:{legend:{display:false}}}
+  });
+}
+
+function baseOpts(){
+  const grid='#2d3742', txt='#8b98a5';
+  return {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{ labels:{ color:'#e6edf3', boxWidth:12, font:{size:11} } } },
+    scales:{
+      x:{ ticks:{color:txt}, grid:{color:grid} },
+      y:{ beginAtZero:true, ticks:{color:txt}, grid:{color:grid} }
+    }
+  };
+}
+
+function table(){
+  const rows = [...report.results].sort((a,b)=>{
+    let x=a[sortKey], y=b[sortKey];
+    if (typeof x==='string') return x.localeCompare(y)*sortDir;
+    return ((x||0)-(y||0))*sortDir;
+  });
+  document.querySelector('#tbl thead tr').innerHTML = COLS.map(c=>`<th onclick="sortBy('${c[0]}')">${c[1]}</th>`).join('');
+  document.querySelector('#tbl tbody').innerHTML = rows.map(r=>'<tr>'+COLS.map(c=>{
+    let v=r[c[0]];
+    if (c[0]==='runType') return `<td><span class="pill ${v.toLowerCase()}">${v}</span></td>`;
+    if (c[0]==='strategy') return `<td>${STRATS[v]?.label||v}</td>`;
+    return `<td>${num(v)}</td>`;
+  }).join('')+'</tr>').join('');
+}
+
+function sortBy(k){ if(sortKey===k) sortDir*=-1; else {sortKey=k; sortDir=1;} table(); }
+
+init();
+</script>
+</body>
+</html>
